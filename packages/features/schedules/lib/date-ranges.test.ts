@@ -158,6 +158,64 @@ describe("processWorkingHours", () => {
     vi.useRealTimers();
   });
 
+  it("does not shift afternoon availability on a DST spring-forward date", () => {
+    // Regression test: processWorkingHours previously sampled the offset-comparison
+    // timestamp with a 12-hour, no-meridiem format ("hh:mm"), so a 13:00 start formatted
+    // as "01:00" and was read back as 1 AM. That put afternoon schedules on the wrong side
+    // of the DST transition, shifting them an hour late. Morning schedules (e.g. the 9 AM
+    // test above) were unaffected because 12- and 24-hour representations agree below 13:00.
+    vi.useFakeTimers().setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
+
+    const item = {
+      days: [0, 1, 2, 3, 4, 5, 6],
+      startTime: new Date(Date.UTC(2023, 5, 12, 13, 0)), // 1 PM
+      endTime: new Date(Date.UTC(2023, 5, 12, 18, 0)), // 6 PM
+    };
+
+    const timeZone = "America/New_York";
+
+    // DST (US) starts 2026-03-08.
+    const dateFrom = dayjs("2026-03-06T00:00:00Z").tz(timeZone);
+    const dateTo = dayjs("2026-03-11T00:00:00Z").tz(timeZone);
+
+    const results = Object.values(
+      processWorkingHours({}, { item, timeZone, dateFrom, dateTo, travelSchedules: [] })
+    );
+
+    // Compare by formatted instant rather than toStrictEqual on the raw dayjs objects:
+    // processWorkingHours applies a post-hoc offsetDiff correction via `.add()` on the DST
+    // transition date, which leaves the corrected dayjs object's internal cache (e.g. $offset)
+    // looking different from a freshly-constructed `dayjs(iso).tz(timeZone)`, even though both
+    // represent the exact same UTC instant — the same pattern already used above (search
+    // ".start.format()).toEqual(dayjs(...").
+    expect(results.map((r) => ({ start: r.start.utc().format(), end: r.end.utc().format() }))).toStrictEqual([
+      {
+        start: dayjs("2026-03-06T18:00:00.000Z").utc().format(),
+        end: dayjs("2026-03-06T23:00:00.000Z").utc().format(),
+      },
+      {
+        start: dayjs("2026-03-07T18:00:00.000Z").utc().format(),
+        end: dayjs("2026-03-07T23:00:00.000Z").utc().format(),
+      },
+      {
+        // DST transition date: 1 PM-6 PM America/New_York is 17:00-22:00 UTC, not 18:00-23:00.
+        start: dayjs("2026-03-08T17:00:00.000Z").utc().format(),
+        end: dayjs("2026-03-08T22:00:00.000Z").utc().format(),
+      },
+      {
+        start: dayjs("2026-03-09T17:00:00.000Z").utc().format(),
+        end: dayjs("2026-03-09T22:00:00.000Z").utc().format(),
+      },
+      {
+        start: dayjs("2026-03-10T17:00:00.000Z").utc().format(),
+        end: dayjs("2026-03-10T22:00:00.000Z").utc().format(),
+      },
+    ]);
+
+    vi.setSystemTime(vi.getRealSystemTime());
+    vi.useRealTimers();
+  });
+
   // TEMPORAIRLY SKIPPING THIS TEST - Started failing after 29th Oct
   it.skip("should return the correct working hours in the month were DST ends", () => {
     const item = {

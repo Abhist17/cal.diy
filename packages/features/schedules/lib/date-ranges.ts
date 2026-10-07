@@ -67,7 +67,15 @@ export function processWorkingHours(
 
     let end = dateInTz.add(item.endTime.getUTCHours(), "hours").add(item.endTime.getUTCMinutes(), "minutes");
 
-    const offsetBeginningOfDay = dayjs(start.format("YYYY-MM-DD hh:mm")).tz(adjustedTimezone).utcOffset();
+    // Parse the wall-clock string directly as local time in `adjustedTimezone` via the
+    // two-argument dayjs.tz(dateString, zone) form, instead of dayjs(string).tz(zone): the
+    // latter parses the string in the runtime's default timezone first and only then
+    // reinterprets that instant in `adjustedTimezone`, so the resulting offset silently
+    // depended on the server's TZ rather than on the wall-clock hour we're actually probing.
+    // That indirection was compounded by "hh:mm" (12-hour, no meridiem), which makes 13:00
+    // and 01:00 format identically, so afternoon start times were probed at the wrong hour
+    // and could land on the wrong side of a DST transition.
+    const offsetBeginningOfDay = dayjs.tz(start.format("YYYY-MM-DD HH:mm"), adjustedTimezone).utcOffset();
     const offsetDiff = start.utcOffset() - offsetBeginningOfDay; // there will be 60 min offset on the day day of DST change
 
     start = start.add(offsetDiff, "minute");
